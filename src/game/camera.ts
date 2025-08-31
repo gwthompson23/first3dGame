@@ -66,4 +66,6 @@ export class Camera {
   }
 
   getViewProj(): Mat4 { return this.viewProj }
+  getView(): Mat4 { return this.view }
+  getProj(): Mat4 { return this.proj }
 }
