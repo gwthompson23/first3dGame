@@ -24,3 +24,10 @@
 ## Notes
 - Static assets live under `public/` (ground texture, sky HDR).
 - Imports inside `src/` use `@/` alias (see `vite.config.ts`).
+
+## GitHub Pages (deploy via docs/)
+- Set the base path for your repo when building: on macOS/Linux run `export VITE_BASE="/<REPO_NAME>/"` (PowerShell: `$env:VITE_BASE = '/<REPO_NAME>/'`).
+- Build to `docs/`: `npm run build`
+- Commit and push the `docs/` folder on `main`.
+- In GitHub: Settings → Pages → Build and deployment → “Deploy from a branch” → Branch: `main`, Folder: `/docs`.
+- Open: `https://<your-user>.github.io/<REPO_NAME>/`

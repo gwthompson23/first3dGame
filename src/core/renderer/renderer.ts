@@ -280,9 +280,10 @@ export class Renderer {
     gl.bindBuffer(gl.ARRAY_BUFFER, gbuf)
     gl.bufferData(gl.ARRAY_BUFFER, groundVerts, gl.STATIC_DRAW)
 
-    // Start loading textures
-    loadImageTexture(gl, '/textures/ground/diffuse.jpg').then(tex => { this.groundTex = tex }).catch(() => {})
-    loadHDRToLDRTexture(gl, '/textures/sky/sky.hdr').then(tex => { this.skyTex = tex }).catch(() => {})
+    // Start loading textures (respect Vite base for GitHub Pages)
+    const BASE = (import.meta as any).env?.BASE_URL ?? '/'
+    loadImageTexture(gl, BASE + 'textures/ground/diffuse.jpg').then(tex => { this.groundTex = tex }).catch(() => {})
+    loadHDRToLDRTexture(gl, BASE + 'textures/sky/sky.hdr').then(tex => { this.skyTex = tex }).catch(() => {})
     // Build court texture and mesh
     createCourtTexture(gl, COURT).then(({ tex }) => { this.courtTex = tex }).catch(() => {})
     {
