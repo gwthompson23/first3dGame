@@ -28,17 +28,19 @@ export class Net {
   private restVert: number
   private restRing: Float32Array // radius per row
   private gravity = 9.81
-  private damping = 0.995
-  private iterations = 4
+  private damping = 0.99
+  private iterations = 3
+  private stiffness = 0.2 // general constraint stiffness (0..0.5)
+  private ringStiffness = 0.1 // around-ring stiffness
 
   constructor(params?: Partial<NetParams>) {
     const p: NetParams = {
-      cols: 16,
-      rows: 10,
-      length: 0.53,
-      attachRadius: 0.235, // match rim outer radius
-      bottomRadius: 0.10,
-      nodeRadius: 0.02,
+      cols: 18,
+      rows: 12,
+      length: 0.55,
+      attachRadius: 0.255, // match rim outer radius
+      bottomRadius: 0.14, // larger than ball radius to guarantee exit
+      nodeRadius: 0.012,
       ...params,
     }
     this.cols = p.cols
@@ -63,7 +65,10 @@ export class Net {
     for (let c = 0; c < this.cols; c++) {
       const a = (c / this.cols) * Math.PI * 2
       const x = cx + Math.cos(a) * this.restRing[0]
-      const z = cz + Math.sin(a) * this.restRing[0]
+      let z = cz + Math.sin(a) * this.restRing[0]
+      // Prevent anchors behind backboard front
+      const zMin = COURT.backboardZ + 0.05/2 + 0.003
+      if (z < zMin) z = zMin
       const i3 = c * 3
       this.anchors[i3 + 0] = x
       this.anchors[i3 + 1] = cy
@@ -134,7 +139,7 @@ export class Net {
     // vertical constraints
     for (let r = 0; r < this.rows - 1; r++) {
       for (let c = 0; c < this.cols; c++) {
-        this.enforceDistance(this.index(c, r), this.index(c, r + 1), this.restVert)
+        this.enforceDistance(this.index(c, r), this.index(c, r + 1), this.restVert, this.stiffness)
       }
     }
     // ring constraints per row (to maintain radius and keep diamond shape)
@@ -142,11 +147,12 @@ export class Net {
       const rad = this.restRing[r]
       for (let c = 0; c < this.cols; c++) {
         // neighbor around ring
-        this.enforceDistance(this.index(c, r), this.index(c + 1, r), 2 * rad * Math.sin(Math.PI / this.cols))
+        this.enforceDistance(this.index(c, r), this.index(c + 1, r), 2 * rad * Math.sin(Math.PI / this.cols), this.ringStiffness)
         // diagonals for diamond lattice
         if (r < this.rows - 1) {
           this.enforceDistance(this.index(c, r), this.index(c + 1, r + 1),
-            Math.sqrt(this.restVert * this.restVert + (2 * this.restRingAvg(r, r + 1) * Math.sin(Math.PI / this.cols)) ** 2))
+            Math.sqrt(this.restVert * this.restVert + (2 * this.restRingAvg(r, r + 1) * Math.sin(Math.PI / this.cols)) ** 2),
+            0.4)
         }
       }
     }
@@ -154,7 +160,7 @@ export class Net {
 
   private restRingAvg(r0: number, r1: number) { return (this.restRing[r0] + this.restRing[r1]) * 0.5 }
 
-  private enforceDistance(i0: number, i1: number, rest: number) {
+  private enforceDistance(i0: number, i1: number, rest: number, stiffness = 0.5) {
     const p = this.positions
     const i0_3 = i0 * 3
     const i1_3 = i1 * 3
@@ -165,10 +171,11 @@ export class Net {
     let dz = z1 - z0
     const d = Math.hypot(dx, dy, dz) || 1
     const diff = (d - rest) / d
-    // move both points half way
-    const ox = dx * 0.5 * diff
-    const oy = dy * 0.5 * diff
-    const oz = dz * 0.5 * diff
+    // move both points partially based on stiffness (<= 0.5)
+    const k = Math.min(Math.max(stiffness, 0), 0.5)
+    const ox = dx * k * diff
+    const oy = dy * k * diff
+    const oz = dz * k * diff
     // top row anchored later; treat uniformly here
     p[i0_3] += ox
     p[i0_3 + 1] += oy
@@ -209,7 +216,7 @@ export class Net {
     const rNode = this.nodeRadius
     const collideRadius = br + rNode
     const cr2 = collideRadius * collideRadius
-    const strength = 0.35 // how much net pushes ball back
+    const strength = 0.08 // very soft reflection
     for (let i = 0; i < p.length; i += 3) {
       const dx = ball.pos[0] - p[i]
       const dy = ball.pos[1] - p[i + 1]
@@ -221,23 +228,29 @@ export class Net {
         const nfy = dy / d
         const nfz = dz / d
         const penetration = collideRadius - d
-        // push node back slightly
-        p[i] -= nfx * penetration * 0.5
-        p[i + 1] -= nfy * penetration * 0.5
-        p[i + 2] -= nfz * penetration * 0.5
-        // reflect ball velocity and move out along normal
-        ball.pos[0] += nfx * penetration * 0.6
-        ball.pos[1] += nfy * penetration * 0.6
-        ball.pos[2] += nfz * penetration * 0.6
+        // Prefer sideways separation to avoid popping back upward
+        const sideScale = 0.95
+        const upScale = 0.25
+        // push node back a bit to yield
+        p[i]     -= nfx * penetration * sideScale * 0.15
+        p[i + 1] -= nfy * penetration * upScale   * 0.15
+        p[i + 2] -= nfz * penetration * sideScale * 0.15
+        // move ball mostly sideways out of the node radius
+        ball.pos[0] += nfx * penetration * sideScale * 0.95
+        ball.pos[1] += nfy * penetration * upScale   * 0.95
+        ball.pos[2] += nfz * penetration * sideScale * 0.95
         const vdotn = ball.vel[0]*nfx + ball.vel[1]*nfy + ball.vel[2]*nfz
         if (vdotn < 0) {
-          ball.vel[0] -= (1.0 + strength) * vdotn * nfx
-          ball.vel[1] -= (1.0 + strength) * vdotn * nfy
-          ball.vel[2] -= (1.0 + strength) * vdotn * nfz
-          // light tangential damping
-          ball.vel[0] *= 0.98
-          ball.vel[1] *= 0.98
-          ball.vel[2] *= 0.98
+          // Apply a very soft, mostly tangential response
+          const j = (1.0 + strength) * vdotn
+          ball.vel[0] -= j * nfx
+          ball.vel[1] -= j * nfy
+          ball.vel[2] -= j * nfz
+          // Prevent strong upward bounce: cap upward velocity
+          if (ball.vel[1] > 0) ball.vel[1] *= 0.2
+          // Minimal tangential damping
+          ball.vel[0] *= 0.997
+          ball.vel[2] *= 0.997
         }
       }
     }
@@ -245,4 +258,3 @@ export class Net {
 }
 
 function mix(a: number, b: number, t: number) { return a + (b - a) * t }
-

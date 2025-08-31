@@ -22,6 +22,10 @@ import { createCourtTexture } from '@/core/renderer/court-texture'
 import { Net } from '@/game/world/net'
 import { NetRenderer } from '@/core/renderer/net-renderer'
 import { createBackboardTexture } from '@/core/renderer/backboard-texture'
+import ballVert100 from './shaders/ball.vert.glsl?raw'
+import ballFrag100 from './shaders/ball.frag.glsl?raw'
+import ballVert300 from './shaders/ball.vert-300es.glsl?raw'
+import ballFrag300 from './shaders/ball.frag-300es.glsl?raw'
 
 export class Renderer {
   // Color program for debug cube
@@ -82,6 +86,18 @@ export class Renderer {
   private backboardBuffer: WebGLBuffer | null = null
   private backboardVertexCount = 0
   private netRenderer: NetRenderer | null = null
+  // Basketball (procedural textured sphere)
+  private ballProgram: WebGLProgram | null = null
+  private uBallViewProj: WebGLUniformLocation | null = null
+  private uBallLightDir: WebGLUniformLocation | null = null
+  private ballUnit: Float32Array | null = null // pos(3), uv(2), normal(3)
+  private ballBuffer: WebGLBuffer | null = null
+
+  // Dynamic primitives: sphere + line
+  private sphereUnit: Float32Array | null = null // interleaved pos(3)+col(3)
+  private sphereVertexCount = 0
+  private sphereBuffer: WebGLBuffer | null = null
+  private lineBuffer: WebGLBuffer | null = null
 
   // Cube vertex data: position (x,y,z) + color (r,g,b)
   private static cube(): Float32Array {
@@ -390,6 +406,16 @@ export class Renderer {
     }
     // Net renderer
     this.netRenderer = new NetRenderer(gl)
+
+    // Build basketball shader program
+    try {
+      const bvs = this.isWebGL2 ? ballVert300 : ballVert100
+      const bfs = this.isWebGL2 ? ballFrag300 : ballFrag100
+      const prog = createProgram(gl, bvs, bfs)
+      this.ballProgram = prog
+      this.uBallViewProj = gl.getUniformLocation(prog, 'u_viewProj')
+      this.uBallLightDir = gl.getUniformLocation(prog, 'u_lightDir')
+    } catch {}
   }
 
   render(view: Float32Array, proj: Float32Array, cameraPos?: readonly number[], player?: { pos: readonly number[], radius: number, height: number }) {
@@ -705,6 +731,247 @@ export class Renderer {
     if (this.netRenderer) this.netRenderer.sync(net, camPos)
   }
 
+  // Draw a colored sphere at center with radius
+  renderSphere(viewProj: Float32Array, center: readonly number[], radius: number, color: readonly number[]) {
+    const gl = this.gl
+    if (!this.sphereUnit) this.buildSphereUnit()
+    if (!this.sphereBuffer) {
+      const b = gl.createBuffer(); if (!b) return; this.sphereBuffer = b
+    }
+    const unit = this.sphereUnit as Float32Array
+    const out = new Float32Array(unit.length)
+    for (let i = 0; i < unit.length; i += 6) {
+      out[i + 0] = center[0] + unit[i + 0] * radius
+      out[i + 1] = center[1] + unit[i + 1] * radius
+      out[i + 2] = center[2] + unit[i + 2] * radius
+      out[i + 3] = color[0]
+      out[i + 4] = color[1]
+      out[i + 5] = color[2]
+    }
+    gl.useProgram(this.program)
+    gl.uniformMatrix4fv(this.uViewProj, false, viewProj)
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.sphereBuffer)
+    gl.bufferData(gl.ARRAY_BUFFER, out, gl.DYNAMIC_DRAW)
+    const stride = 6 * 4
+    if (this.isWebGL2) {
+      const posLoc = 0, colLoc = 1
+      gl.enableVertexAttribArray(posLoc)
+      gl.vertexAttribPointer(posLoc, 3, gl.FLOAT, false, stride, 0)
+      gl.enableVertexAttribArray(colLoc)
+      gl.vertexAttribPointer(colLoc, 3, gl.FLOAT, false, stride, 3 * 4)
+    } else {
+      const posLoc = gl.getAttribLocation(this.program, 'a_position')
+      const colLoc = gl.getAttribLocation(this.program, 'a_color')
+      gl.enableVertexAttribArray(posLoc)
+      gl.vertexAttribPointer(posLoc, 3, gl.FLOAT, false, stride, 0)
+      gl.enableVertexAttribArray(colLoc)
+      gl.vertexAttribPointer(colLoc, 3, gl.FLOAT, false, stride, 3 * 4)
+    }
+    gl.drawArrays(gl.TRIANGLES, 0, this.sphereVertexCount)
+  }
+
+  // Draw a colored line strip from 3D points
+  renderLineStrip(viewProj: Float32Array, points: readonly number[], color: readonly number[]) {
+    const gl = this.gl
+    if (!this.lineBuffer) { const b = gl.createBuffer(); if (!b) return; this.lineBuffer = b }
+    const n = Math.floor(points.length / 3)
+    if (n <= 1) return
+    const data = new Float32Array(n * 6)
+    for (let i = 0; i < n; i++) {
+      data[i*6+0] = points[i*3+0]
+      data[i*6+1] = points[i*3+1]
+      data[i*6+2] = points[i*3+2]
+      data[i*6+3] = color[0]
+      data[i*6+4] = color[1]
+      data[i*6+5] = color[2]
+    }
+    gl.useProgram(this.program)
+    gl.uniformMatrix4fv(this.uViewProj, false, viewProj)
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.lineBuffer)
+    gl.bufferData(gl.ARRAY_BUFFER, data, gl.DYNAMIC_DRAW)
+    const stride = 6 * 4
+    if (this.isWebGL2) {
+      const posLoc = 0, colLoc = 1
+      gl.enableVertexAttribArray(posLoc)
+      gl.vertexAttribPointer(posLoc, 3, gl.FLOAT, false, stride, 0)
+      gl.enableVertexAttribArray(colLoc)
+      gl.vertexAttribPointer(colLoc, 3, gl.FLOAT, false, stride, 3 * 4)
+    } else {
+      const posLoc = gl.getAttribLocation(this.program, 'a_position')
+      const colLoc = gl.getAttribLocation(this.program, 'a_color')
+      gl.enableVertexAttribArray(posLoc)
+      gl.vertexAttribPointer(posLoc, 3, gl.FLOAT, false, stride, 0)
+      gl.enableVertexAttribArray(colLoc)
+      gl.vertexAttribPointer(colLoc, 3, gl.FLOAT, false, stride, 3 * 4)
+    }
+    gl.lineWidth(2)
+    gl.drawArrays(gl.LINE_STRIP, 0, n)
+  }
+
+  // Draw lines from an interleaved array [x,y,z,r,g,b] per-vertex (pairs make segments)
+  renderLines(viewProj: Float32Array, vertices: Float32Array) {
+    const gl = this.gl
+    if (vertices.length === 0) return
+    if (!this.lineBuffer) { const b = gl.createBuffer(); if (!b) return; this.lineBuffer = b }
+    gl.useProgram(this.program)
+    gl.uniformMatrix4fv(this.uViewProj, false, viewProj)
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.lineBuffer)
+    gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.DYNAMIC_DRAW)
+    const stride = 6 * 4
+    if (this.isWebGL2) {
+      const posLoc = 0, colLoc = 1
+      gl.enableVertexAttribArray(posLoc)
+      gl.vertexAttribPointer(posLoc, 3, gl.FLOAT, false, stride, 0)
+      gl.enableVertexAttribArray(colLoc)
+      gl.vertexAttribPointer(colLoc, 3, gl.FLOAT, false, stride, 3 * 4)
+    } else {
+      const posLoc = gl.getAttribLocation(this.program, 'a_position')
+      const colLoc = gl.getAttribLocation(this.program, 'a_color')
+      gl.enableVertexAttribArray(posLoc)
+      gl.vertexAttribPointer(posLoc, 3, gl.FLOAT, false, stride, 0)
+      gl.enableVertexAttribArray(colLoc)
+      gl.vertexAttribPointer(colLoc, 3, gl.FLOAT, false, stride, 3 * 4)
+    }
+    gl.lineWidth(2)
+    gl.drawArrays(gl.LINES, 0, vertices.length / 6)
+  }
+
+  private buildSphereUnit() {
+    const segU = 18
+    const segV = 12
+    const verts: number[] = []
+    for (let v = 0; v < segV; v++) {
+      const v0 = v / segV
+      const v1 = (v + 1) / segV
+      const phi0 = v0 * Math.PI
+      const phi1 = v1 * Math.PI
+      for (let u = 0; u < segU; u++) {
+        const u0 = u / segU
+        const u1 = (u + 1) / segU
+        const th0 = u0 * Math.PI * 2
+        const th1 = u1 * Math.PI * 2
+        const p000 = sph(th0, phi0)
+        const p010 = sph(th1, phi0)
+        const p011 = sph(th1, phi1)
+        const p001 = sph(th0, phi1)
+        // tri1
+        verts.push(p000[0], p000[1], p000[2], 1, 1, 1)
+        verts.push(p010[0], p010[1], p010[2], 1, 1, 1)
+        verts.push(p011[0], p011[1], p011[2], 1, 1, 1)
+        // tri2
+        verts.push(p000[0], p000[1], p000[2], 1, 1, 1)
+        verts.push(p011[0], p011[1], p011[2], 1, 1, 1)
+        verts.push(p001[0], p001[1], p001[2], 1, 1, 1)
+      }
+    }
+    function sph(theta: number, phi: number): [number, number, number] {
+      const x = Math.sin(phi) * Math.cos(theta)
+      const y = Math.cos(phi)
+      const z = Math.sin(phi) * Math.sin(theta)
+      return [x, y, z]
+    }
+    this.sphereUnit = new Float32Array(verts)
+    this.sphereVertexCount = verts.length / 6
+  }
+
+  // Unit sphere for ball: pos, uv, normal interleaved
+  private buildBallUnit() {
+    const segU = 36
+    const segV = 18
+    const verts: number[] = []
+    for (let v = 0; v < segV; v++) {
+      const v0 = v / segV
+      const v1 = (v + 1) / segV
+      const phi0 = v0 * Math.PI
+      const phi1 = v1 * Math.PI
+      for (let u = 0; u < segU; u++) {
+        const u0 = u / segU
+        const u1 = (u + 1) / segU
+        const th0 = u0 * Math.PI * 2
+        const th1 = u1 * Math.PI * 2
+        const p000 = sph(th0, phi0)
+        const p010 = sph(th1, phi0)
+        const p011 = sph(th1, phi1)
+        const p001 = sph(th0, phi1)
+        // tri1
+        push(p000, [u0, v0]); push(p010, [u1, v0]); push(p011, [u1, v1])
+        // tri2
+        push(p000, [u0, v0]); push(p011, [u1, v1]); push(p001, [u0, v1])
+      }
+    }
+    function sph(theta: number, phi: number): [number, number, number] {
+      const x = Math.sin(phi) * Math.cos(theta)
+      const y = Math.cos(phi)
+      const z = Math.sin(phi) * Math.sin(theta)
+      return [x, y, z]
+    }
+    function push(p: [number, number, number], uv: [number, number]) {
+      const nx = p[0], ny = p[1], nz = p[2]
+      verts.push(p[0], p[1], p[2],  uv[0], uv[1],  nx, ny, nz)
+    }
+    this.ballUnit = new Float32Array(verts)
+  }
+
+  renderBasketball(viewProj: Float32Array, center: readonly number[], radius: number, rot3x3: Float32Array) {
+    if (!this.ballProgram) { return this.renderSphere(viewProj, center, radius, [0.92,0.45,0.1]) }
+    const gl = this.gl
+    if (!this.ballUnit) this.buildBallUnit()
+    if (!this.ballBuffer) { const b = gl.createBuffer(); if (!b) return; this.ballBuffer = b }
+    const unit = this.ballUnit as Float32Array
+    const nverts = unit.length / 8
+    const out = new Float32Array(unit.length)
+    const m = rot3x3
+    for (let i = 0; i < nverts; i++) {
+      const ip = i*8
+      // transform position by R, scale, translate
+      const ux = unit[ip+0], uy = unit[ip+1], uz = unit[ip+2]
+      const rx = m[0]*ux + m[1]*uy + m[2]*uz
+      const ry = m[3]*ux + m[4]*uy + m[5]*uz
+      const rz = m[6]*ux + m[7]*uy + m[8]*uz
+      out[ip+0] = center[0] + rx * radius
+      out[ip+1] = center[1] + ry * radius
+      out[ip+2] = center[2] + rz * radius
+      // uv passthrough
+      out[ip+3] = unit[ip+3]
+      out[ip+4] = unit[ip+4]
+      // normal transform by R
+      const nxu = unit[ip+5], nyu = unit[ip+6], nzu = unit[ip+7]
+      out[ip+5] = m[0]*nxu + m[1]*nyu + m[2]*nzu
+      out[ip+6] = m[3]*nxu + m[4]*nyu + m[5]*nzu
+      out[ip+7] = m[6]*nxu + m[7]*nyu + m[8]*nzu
+    }
+    gl.useProgram(this.ballProgram)
+    gl.uniformMatrix4fv(this.uBallViewProj, false, viewProj)
+    // light dir like ground
+    const ld = new Float32Array([0.4, 1.0, 0.3])
+    const len = Math.hypot(ld[0], ld[1], ld[2]) || 1
+    ld[0]/=len; ld[1]/=len; ld[2]/=len
+    gl.uniform3fv(this.uBallLightDir, ld)
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.ballBuffer)
+    gl.bufferData(gl.ARRAY_BUFFER, out, gl.DYNAMIC_DRAW)
+    const stride = 8 * 4
+    if (this.isWebGL2) {
+      const posLoc = 0, uvLoc = 1, nLoc = 2
+      gl.enableVertexAttribArray(posLoc)
+      gl.vertexAttribPointer(posLoc, 3, gl.FLOAT, false, stride, 0)
+      gl.enableVertexAttribArray(uvLoc)
+      gl.vertexAttribPointer(uvLoc, 2, gl.FLOAT, false, stride, 3 * 4)
+      gl.enableVertexAttribArray(nLoc)
+      gl.vertexAttribPointer(nLoc, 3, gl.FLOAT, false, stride, 5 * 4)
+    } else {
+      const posLoc = gl.getAttribLocation(this.ballProgram, 'a_position')
+      const uvLoc = gl.getAttribLocation(this.ballProgram, 'a_uv')
+      const nLoc = gl.getAttribLocation(this.ballProgram, 'a_normal')
+      gl.enableVertexAttribArray(posLoc)
+      gl.vertexAttribPointer(posLoc, 3, gl.FLOAT, false, stride, 0)
+      gl.enableVertexAttribArray(uvLoc)
+      gl.vertexAttribPointer(uvLoc, 2, gl.FLOAT, false, stride, 3 * 4)
+      gl.enableVertexAttribArray(nLoc)
+      gl.vertexAttribPointer(nLoc, 3, gl.FLOAT, false, stride, 5 * 4)
+    }
+    gl.drawArrays(gl.TRIANGLES, 0, nverts)
+  }
+
   // Generate simple hoop/backboard geometry: pole (box), backboard (box), rim (ring)
   private buildHoopGeometry(): Float32Array {
     const colGray = [0.6, 0.6, 0.65]
@@ -732,21 +999,27 @@ export class Renderer {
         for (const p of q) { v.push(p[0],p[1],p[2], col[0],col[1],col[2]) }
       }
     }
-    // Rim ring (flat strip)
+    // Rim ring (flat strip). Clamp back side so it never goes behind backboard front.
     const pushRing = (center: [number, number, number], rIn: number, rOut: number, y: number, seg = 24) => {
+      const zMin = COURT.backboardZ + 0.05/2 + 0.002 // keep in front of backboard
       for (let i = 0; i < seg; i++) {
         const a0 = (i / seg) * Math.PI * 2
         const a1 = ((i + 1) / seg) * Math.PI * 2
         const c0 = Math.cos(a0), s0 = Math.sin(a0)
         const c1 = Math.cos(a1), s1 = Math.sin(a1)
         const x0i = center[0] + c0 * rIn
-        const z0i = center[2] + s0 * rIn
+        let z0i = center[2] + s0 * rIn
         const x0o = center[0] + c0 * rOut
-        const z0o = center[2] + s0 * rOut
+        let z0o = center[2] + s0 * rOut
         const x1i = center[0] + c1 * rIn
-        const z1i = center[2] + s1 * rIn
+        let z1i = center[2] + s1 * rIn
         const x1o = center[0] + c1 * rOut
-        const z1o = center[2] + s1 * rOut
+        let z1o = center[2] + s1 * rOut
+        // Clamp any vertex that would fall behind the backboard front plane
+        if (z0i < zMin) z0i = zMin
+        if (z0o < zMin) z0o = zMin
+        if (z1i < zMin) z1i = zMin
+        if (z1o < zMin) z1o = zMin
         v.push(x0i,y,z0i, ...colOrange)
         v.push(x1i,y,z1i, ...colOrange)
         v.push(x1o,y,z1o, ...colOrange)
@@ -834,8 +1107,8 @@ export class Renderer {
     )
 
     // Rim ring centered at hoop
-    const rOut = 0.235
-    const rIn = 0.19
+    const rIn = 0.205
+    const rOut = 0.255
     pushRing([cx, rimY, rimZ], rIn, rOut, rimY)
 
     return new Float32Array(v)

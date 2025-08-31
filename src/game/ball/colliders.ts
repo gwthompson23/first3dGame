@@ -2,24 +2,31 @@ import { COURT } from '@/game/world/court'
 import type { BallProxy } from '@/game/world/net'
 
 // Backboard front plane collider for a sphere ball
-export function collideBallWithBackboard(ball: BallProxy, restitution = 0.6) {
+export function collideBallWithBackboard(ball: BallProxy, restitution = 0.3) {
   const boardT = 0.05
   const planeZ = COURT.backboardZ + boardT / 2
-  // If sphere center penetrates plane, push out and reflect z velocity (plane normal toward -Z)
-  if (ball.pos[2] + ball.radius > planeZ) {
-    const pen = ball.pos[2] + ball.radius - planeZ
-    ball.pos[2] -= pen
-    if (ball.vel[2] > 0) ball.vel[2] = -ball.vel[2] * restitution
-    // friction parallel to plane
-    ball.vel[0] *= 0.9
-    ball.vel[1] *= 0.9
+  const slop = 0.03 // be a bit more forgiving (3cm)
+  // Front face points toward +Z (into the court).
+  // Trigger slightly early with slop so near misses still bounce.
+  if (ball.pos[2] - ball.radius < planeZ + slop) {
+    const target = planeZ + slop + ball.radius
+    const pen = target - ball.pos[2]
+    if (pen > 0) {
+      ball.pos[2] += pen
+      // Reflect if moving into the board (low bounce)
+      if (ball.vel[2] < 0) ball.vel[2] = -ball.vel[2] * restitution
+      // stronger friction parallel to plane (quickly kills lateral)
+      ball.vel[0] *= 0.75
+      ball.vel[1] *= 0.75
+    }
   }
 }
 
 // Rim as a ring of small spheres
-export function collideBallWithRim(ball: BallProxy, restitution = 0.5) {
-  const ringR = 0.2125 // mid-thickness radius between inner/outer
-  const tubeR = 0.02
+export function collideBallWithRim(ball: BallProxy, restitution = 0.2) {
+  // Larger rim: inner ~0.205, outer ~0.255 => mid ~0.23
+  const ringR = 0.23
+  const tubeR = 0.012
   const seg = 24
   const cx = COURT.hoopCenter[0]
   const cy = COURT.hoopCenter[1]
@@ -55,4 +62,3 @@ export function collideBallWithRim(ball: BallProxy, restitution = 0.5) {
     }
   }
 }
-
