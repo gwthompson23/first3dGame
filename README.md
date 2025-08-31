@@ -1,32 +1,26 @@
-First FPS (TypeScript + Vite + WebGL)
+# First 3D Game — WebGL Basketball (TypeScript + Vite)
 
-Quick start
+## Overview
+- Walk around a half-court, pick up the ball, aim with an arc preview, and shoot. The ball collides with the backboard/rim, interacts with a flowy net, rotates in the air, and triggers confetti + a score counter on makes.
+
+## Play
 - Install: `npm install`
-- Dev server: `npm run dev` then open the shown URL
-- Build: `npm run build`
+- Run: `npm run dev` and open the printed URL
+- Click the canvas to lock the pointer; press `Esc` to unlock
+
+## Controls
+- Move: `WASD` or Arrow keys
+- Look: Mouse
+- Jump: `Space`
+- Pick up ball: Walk close to it
+- Aim: Hold Left Mouse (trajectory arc shows)
+- Shoot: Release Left Mouse
+
+## Build
+- Typecheck: `npm run typecheck`
+- Production build: `npm run build`
 - Preview build: `npm run preview`
 
-Controls
-- Click the canvas to capture the pointer
-- Press `Esc` to release pointer lock
-- WASD/Arrow keys and mouse deltas are captured (no movement yet)
-
-Project layout
-- `index.html`: App shell; loads `/src/main.ts`
-- `src/main.ts`: Entry; boots `App`
-- `src/app.ts`: WebGL context, resize, pointer lock, RAF loop wiring
-- `src/loop.ts`: Fixed timestep update + interpolated render
-- `src/core/input/inputs.ts`: Keyboard + mouse state with pointer lock
-- `src/core/gl.ts`: Shader/program helpers (for when you start drawing)
-- `src/styles.css`: Basic full-viewport canvas and cursor hiding
-
-Next steps
-- Add a camera: `src/game/camera.ts` with yaw/pitch + projection
-- Add a player/controller: `src/game/player.ts` to apply inputs
-- Add a renderer: `src/core/renderer/` and simple shaders under `src/core/renderer/shaders/`
-- Draw something (e.g., a colored triangle or a skybox) to verify matrices
-
-Notes
-- Index file sits at project root (Vite default). Static assets go in `public/` if needed.
-- Import GLSL files using `?raw` or add them under `src` and declare `*.glsl` (see `src/types/glsl.d.ts`).
-
+## Notes
+- Static assets live under `public/` (ground texture, sky HDR).
+- Imports inside `src/` use `@/` alias (see `vite.config.ts`).
