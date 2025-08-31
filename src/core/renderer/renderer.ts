@@ -17,6 +17,11 @@ import { mat4Multiply, mat4LookAt, mat4Ortho } from '@/core/math/math'
 import { heightAt, TERRAIN_SIZE } from '@/game/world/terrain'
 import { loadImageTexture } from '@/core/renderer/texture'
 import { loadHDRToLDRTexture } from '@/core/renderer/hdr'
+import { COURT } from '@/game/world/court'
+import { createCourtTexture } from '@/core/renderer/court-texture'
+import { Net } from '@/game/world/net'
+import { NetRenderer } from '@/core/renderer/net-renderer'
+import { createBackboardTexture } from '@/core/renderer/backboard-texture'
 
 export class Renderer {
   // Color program for debug cube
@@ -65,6 +70,18 @@ export class Renderer {
   private lightProj = new Float32Array(16)
   private lightViewProj = new Float32Array(16)
   private playerShadowBuffer: WebGLBuffer | null = null
+  
+  // Court
+  private courtBuffer: WebGLBuffer | null = null
+  private courtVertexCount = 0
+  private courtTex: WebGLTexture | null = null
+  // Hoop/backboard
+  private hoopBuffer: WebGLBuffer | null = null
+  private hoopVertexCount = 0
+  private backboardTex: WebGLTexture | null = null
+  private backboardBuffer: WebGLBuffer | null = null
+  private backboardVertexCount = 0
+  private netRenderer: NetRenderer | null = null
 
   // Cube vertex data: position (x,y,z) + color (r,g,b)
   private static cube(): Float32Array {
@@ -250,6 +267,35 @@ export class Renderer {
     // Start loading textures
     loadImageTexture(gl, '/textures/ground/diffuse.jpg').then(tex => { this.groundTex = tex }).catch(() => {})
     loadHDRToLDRTexture(gl, '/textures/sky/sky.hdr').then(tex => { this.skyTex = tex }).catch(() => {})
+    // Build court texture and mesh
+    createCourtTexture(gl, COURT).then(({ tex }) => { this.courtTex = tex }).catch(() => {})
+    {
+      const y = COURT.y + 0.01
+      const hw = COURT.halfWidth
+      const hl = COURT.length / 2
+      // Two triangles, with normals up and uv 0..1 across the court rect
+      const cx = COURT.center[0]
+      const cz = COURT.center[2]
+      const x0 = cx - hw
+      const x1 = cx + hw
+      const z0 = cz - hl
+      const z1 = cz + hl
+      const verts = new Float32Array([
+        x0, y, z0,  0, 0,  0, 1, 0,
+        x1, y, z0,  1, 0,  0, 1, 0,
+        x1, y, z1,  1, 1,  0, 1, 0,
+        x0, y, z0,  0, 0,  0, 1, 0,
+        x1, y, z1,  1, 1,  0, 1, 0,
+        x0, y, z1,  0, 1,  0, 1, 0,
+      ])
+      const buf = gl.createBuffer()
+      if (buf) {
+        this.courtBuffer = buf
+        this.courtVertexCount = 6
+        gl.bindBuffer(gl.ARRAY_BUFFER, buf)
+        gl.bufferData(gl.ARRAY_BUFFER, verts, gl.STATIC_DRAW)
+      }
+    }
 
     // Fullscreen triangle buffer for sky
     const skyVerts = new Float32Array([
@@ -297,6 +343,53 @@ export class Renderer {
       if (!psb) throw new Error('Failed to create player shadow buffer')
       this.playerShadowBuffer = psb
     }
+
+    // Build hoop/backboard geometry buffer
+    {
+      const g = this.buildHoopGeometry()
+      const buf = gl.createBuffer()
+      if (buf) {
+        this.hoopBuffer = buf
+        this.hoopVertexCount = g.length / 6
+        gl.bindBuffer(gl.ARRAY_BUFFER, buf)
+        gl.bufferData(gl.ARRAY_BUFFER, g, gl.STATIC_DRAW)
+      }
+    }
+    // Backboard front-face textured quad
+    createBackboardTexture(gl).then(tex => { this.backboardTex = tex }).catch(() => {})
+    {
+      const boardW = 1.829
+      const boardH = 1.067
+      const boardT = 0.05
+      const cx = COURT.center[0]
+      const backZ = COURT.backboardZ
+      const rimY = COURT.hoopCenter[1]
+      const boardCenterY = rimY + 0.305
+      const y0 = boardCenterY - boardH / 2
+      const y1 = boardCenterY + boardH / 2
+      const x0 = cx - boardW / 2
+      const x1 = cx + boardW / 2
+      // Place overlay just in front of recessed side faces
+      const z = backZ + boardT / 2 + 0.002
+      // pos, uv, normal
+      const verts = new Float32Array([
+        x0, y0, z,  0, 0,  0, 0, 1,
+        x1, y0, z,  1, 0,  0, 0, 1,
+        x1, y1, z,  1, 1,  0, 0, 1,
+        x0, y0, z,  0, 0,  0, 0, 1,
+        x1, y1, z,  1, 1,  0, 0, 1,
+        x0, y1, z,  0, 1,  0, 0, 1,
+      ])
+      const buf = gl.createBuffer()
+      if (buf) {
+        this.backboardBuffer = buf
+        this.backboardVertexCount = 6
+        gl.bindBuffer(gl.ARRAY_BUFFER, buf)
+        gl.bufferData(gl.ARRAY_BUFFER, verts, gl.STATIC_DRAW)
+      }
+    }
+    // Net renderer
+    this.netRenderer = new NetRenderer(gl)
   }
 
   render(view: Float32Array, proj: Float32Array, cameraPos?: readonly number[], player?: { pos: readonly number[], radius: number, height: number }) {
@@ -353,6 +446,13 @@ export class Renderer {
         gl2.enableVertexAttribArray(0)
         gl2.vertexAttribPointer(0, 3, gl2.FLOAT, false, 3 * 4, 0)
         gl2.drawArrays(gl2.TRIANGLES, 0, verts.length / 3)
+      }
+      // Hoop/backboard into shadow map
+      if (this.hoopBuffer) {
+        gl2.bindBuffer(gl2.ARRAY_BUFFER, this.hoopBuffer)
+        gl2.enableVertexAttribArray(0)
+        gl2.vertexAttribPointer(0, 3, gl2.FLOAT, false, 6 * 4, 0)
+        gl2.drawArrays(gl2.TRIANGLES, 0, this.hoopVertexCount)
       }
       gl2.bindFramebuffer(gl2.FRAMEBUFFER, null)
       gl2.colorMask(true, true, true, true)
@@ -468,6 +568,40 @@ export class Renderer {
     }
     gl.drawArrays(gl.TRIANGLES, 0, this.groundVertexCount)
 
+    // 2b) Court plane
+    if (this.courtBuffer && this.courtTex) {
+      gl.bindBuffer(gl.ARRAY_BUFFER, this.courtBuffer)
+      const gStride = 8 * 4
+      if (this.isWebGL2) {
+        const posLoc = 0
+        const uvLoc = 1
+        const nLoc = 2
+        gl.enableVertexAttribArray(posLoc)
+        gl.vertexAttribPointer(posLoc, 3, gl.FLOAT, false, gStride, 0)
+        gl.enableVertexAttribArray(uvLoc)
+        gl.vertexAttribPointer(uvLoc, 2, gl.FLOAT, false, gStride, 3 * 4)
+        gl.enableVertexAttribArray(nLoc)
+        gl.vertexAttribPointer(nLoc, 3, gl.FLOAT, false, gStride, 5 * 4)
+      } else {
+        const posLoc = gl.getAttribLocation(this.groundProgram, 'a_position')
+        const uvLoc = gl.getAttribLocation(this.groundProgram, 'a_uv')
+        const nLoc = gl.getAttribLocation(this.groundProgram, 'a_normal')
+        gl.enableVertexAttribArray(posLoc)
+        gl.vertexAttribPointer(posLoc, 3, gl.FLOAT, false, gStride, 0)
+        gl.enableVertexAttribArray(uvLoc)
+        gl.vertexAttribPointer(uvLoc, 2, gl.FLOAT, false, gStride, 3 * 4)
+        if (nLoc !== -1) {
+          gl.enableVertexAttribArray(nLoc)
+          gl.vertexAttribPointer(nLoc, 3, gl.FLOAT, false, gStride, 5 * 4)
+        }
+      }
+      gl.uniform2f(this.uGroundTile, 1.0, 1.0)
+      gl.activeTexture(gl.TEXTURE0)
+      gl.bindTexture(gl.TEXTURE_2D, this.courtTex)
+      gl.uniform1i(this.uGroundSampler, 0)
+      gl.drawArrays(gl.TRIANGLES, 0, this.courtVertexCount)
+    }
+
     // 3) Debug cube (colored)
     gl.useProgram(this.program)
     gl.uniformMatrix4fv(this.uViewProj, false, viewProj)
@@ -489,6 +623,222 @@ export class Renderer {
       gl.vertexAttribPointer(colLoc, 3, gl.FLOAT, false, stride, 3 * 4)
     }
     gl.drawArrays(gl.TRIANGLES, 0, 36)
+
+    // 3b) Hoop/backboard (colored)
+    if (this.hoopBuffer) {
+      gl.bindBuffer(gl.ARRAY_BUFFER, this.hoopBuffer)
+      const stride2 = 6 * 4
+      if (this.isWebGL2) {
+        const posLoc = 0
+        const colLoc = 1
+        gl.enableVertexAttribArray(posLoc)
+        gl.vertexAttribPointer(posLoc, 3, gl.FLOAT, false, stride2, 0)
+        gl.enableVertexAttribArray(colLoc)
+        gl.vertexAttribPointer(colLoc, 3, gl.FLOAT, false, stride2, 3 * 4)
+      } else {
+        const posLoc = gl.getAttribLocation(this.program, 'a_position')
+        const colLoc = gl.getAttribLocation(this.program, 'a_color')
+        gl.enableVertexAttribArray(posLoc)
+        gl.vertexAttribPointer(posLoc, 3, gl.FLOAT, false, stride2, 0)
+        gl.enableVertexAttribArray(colLoc)
+        gl.vertexAttribPointer(colLoc, 3, gl.FLOAT, false, stride2, 3 * 4)
+      }
+      gl.drawArrays(gl.TRIANGLES, 0, this.hoopVertexCount)
+    }
+
+    // 3c) Backboard front-face texture overlay (lit)
+    if (this.backboardBuffer && this.backboardTex) {
+      gl.useProgram(this.groundProgram)
+      gl.uniformMatrix4fv(this.uGroundViewProj, false, viewProj)
+      gl.uniform2f(this.uGroundTile, 1.0, 1.0)
+      // Reuse lighting params from ground
+      const ldir = new Float32Array([0.4, 1.0, 0.3])
+      {
+        const len = Math.hypot(ldir[0], ldir[1], ldir[2]) || 1
+        ldir[0] /= len; ldir[1] /= len; ldir[2] /= len
+      }
+      gl.uniform3fv(this.uGroundLightDir, ldir)
+      gl.uniform3f(this.uGroundLightColor, 1.0, 0.98, 0.92)
+      gl.uniform3f(this.uGroundAmbient, 0.22, 0.24, 0.26)
+      if (cameraPos) gl.uniform3f(this.uGroundCameraPos, cameraPos[0], cameraPos[1], cameraPos[2])
+      gl.uniform1f(this.uGroundShininess, 64.0)
+      gl.uniform3f(this.uGroundSpecColor, 0.01, 0.01, 0.01)
+
+      gl.bindBuffer(gl.ARRAY_BUFFER, this.backboardBuffer)
+      const stride3 = 8 * 4
+      if (this.isWebGL2) {
+        const posLoc = 0
+        const uvLoc = 1
+        const nLoc = 2
+        gl.enableVertexAttribArray(posLoc)
+        gl.vertexAttribPointer(posLoc, 3, gl.FLOAT, false, stride3, 0)
+        gl.enableVertexAttribArray(uvLoc)
+        gl.vertexAttribPointer(uvLoc, 2, gl.FLOAT, false, stride3, 3 * 4)
+        gl.enableVertexAttribArray(nLoc)
+        gl.vertexAttribPointer(nLoc, 3, gl.FLOAT, false, stride3, 5 * 4)
+      } else {
+        const posLoc = gl.getAttribLocation(this.groundProgram, 'a_position')
+        const uvLoc = gl.getAttribLocation(this.groundProgram, 'a_uv')
+        const nLoc = gl.getAttribLocation(this.groundProgram, 'a_normal')
+        gl.enableVertexAttribArray(posLoc)
+        gl.vertexAttribPointer(posLoc, 3, gl.FLOAT, false, stride3, 0)
+        gl.enableVertexAttribArray(uvLoc)
+        gl.vertexAttribPointer(uvLoc, 2, gl.FLOAT, false, stride3, 3 * 4)
+        if (nLoc !== -1) {
+          gl.enableVertexAttribArray(nLoc)
+          gl.vertexAttribPointer(nLoc, 3, gl.FLOAT, false, stride3, 5 * 4)
+        }
+      }
+      gl.activeTexture(gl.TEXTURE0)
+      gl.bindTexture(gl.TEXTURE_2D, this.backboardTex)
+      gl.uniform1i(this.uGroundSampler, 0)
+      gl.drawArrays(gl.TRIANGLES, 0, this.backboardVertexCount)
+    }
+
+    // 3d) Net lines
+    if (this.netRenderer) {
+      this.netRenderer.render(this.program, this.uViewProj, viewProj, this.isWebGL2)
+    }
+  }
+
+  syncNet(net: Net, camPos: readonly number[]) {
+    if (this.netRenderer) this.netRenderer.sync(net, camPos)
+  }
+
+  // Generate simple hoop/backboard geometry: pole (box), backboard (box), rim (ring)
+  private buildHoopGeometry(): Float32Array {
+    const colGray = [0.6, 0.6, 0.65]
+    const colWhite = [0.95, 0.95, 0.98]
+    const colOrange = [0.9, 0.45, 0.1]
+    const v: number[] = []
+    const pushBox = (min: [number, number, number], max: [number, number, number], col: number[]) => {
+      const [x0,y0,z0] = min, [x1,y1,z1] = max
+      // 12 triangles, 36 vertices; each vertex: pos(3)+col(3)
+      const quads = [
+        // +X
+        [ [x1,y0,z0],[x1,y0,z1],[x1,y1,z1], [x1,y0,z0],[x1,y1,z1],[x1,y1,z0] ],
+        // -X
+        [ [x0,y0,z0],[x0,y1,z1],[x0,y0,z1], [x0,y0,z0],[x0,y1,z0],[x0,y1,z1] ],
+        // +Y
+        [ [x0,y1,z0],[x1,y1,z1],[x1,y1,z0], [x0,y1,z0],[x0,y1,z1],[x1,y1,z1] ],
+        // -Y
+        [ [x0,y0,z0],[x1,y0,z0],[x1,y0,z1], [x0,y0,z0],[x1,y0,z1],[x0,y0,z1] ],
+        // +Z
+        [ [x0,y0,z1],[x0,y1,z1],[x1,y1,z1], [x0,y0,z1],[x1,y1,z1],[x1,y0,z1] ],
+        // -Z
+        [ [x0,y0,z0],[x1,y1,z0],[x0,y1,z0], [x0,y0,z0],[x1,y0,z0],[x1,y1,z0] ],
+      ] as const
+      for (const q of quads) {
+        for (const p of q) { v.push(p[0],p[1],p[2], col[0],col[1],col[2]) }
+      }
+    }
+    // Rim ring (flat strip)
+    const pushRing = (center: [number, number, number], rIn: number, rOut: number, y: number, seg = 24) => {
+      for (let i = 0; i < seg; i++) {
+        const a0 = (i / seg) * Math.PI * 2
+        const a1 = ((i + 1) / seg) * Math.PI * 2
+        const c0 = Math.cos(a0), s0 = Math.sin(a0)
+        const c1 = Math.cos(a1), s1 = Math.sin(a1)
+        const x0i = center[0] + c0 * rIn
+        const z0i = center[2] + s0 * rIn
+        const x0o = center[0] + c0 * rOut
+        const z0o = center[2] + s0 * rOut
+        const x1i = center[0] + c1 * rIn
+        const z1i = center[2] + s1 * rIn
+        const x1o = center[0] + c1 * rOut
+        const z1o = center[2] + s1 * rOut
+        v.push(x0i,y,z0i, ...colOrange)
+        v.push(x1i,y,z1i, ...colOrange)
+        v.push(x1o,y,z1o, ...colOrange)
+        v.push(x0i,y,z0i, ...colOrange)
+        v.push(x1o,y,z1o, ...colOrange)
+        v.push(x0o,y,z0o, ...colOrange)
+      }
+    }
+    // Build using COURT spec
+    const cx = COURT.center[0]
+    const baseZ = COURT.baselineZ
+    const backZ = COURT.backboardZ
+    const rimY = COURT.hoopCenter[1]
+    const rimZ = COURT.hoopCenter[2]
+
+    // Pole (box) behind baseline
+    const poleW = 0.18
+    const poleD = 0.18
+    const poleH = 3.4
+    const poleZ = baseZ - 0.8 - poleD/2
+    pushBox([cx - poleW/2, 0, poleZ - poleD/2], [cx + poleW/2, poleH, poleZ + poleD/2], colGray)
+
+    // Backboard box at backZ (thin) — omit the +Z face (front) to avoid z-fighting with the textured overlay
+    const boardW = 1.829
+    const boardH = 1.067
+    const boardT = 0.05
+    const boardCenterY = rimY + 0.305
+    {
+      const x0 = cx - boardW/2, x1 = cx + boardW/2
+      const y0 = boardCenterY - boardH/2, y1 = boardCenterY + boardH/2
+      const z0 = backZ - boardT/2, z1 = backZ + boardT/2
+      const zFrontInset = z1 - 0.002 // slightly recess side/top/bottom faces to avoid overlap with overlay
+      // +X
+      ;(function(){ const pts = [
+        [x1,y0,z0],[x1,y0,zFrontInset],[x1,y1,zFrontInset], [x1,y0,z0],[x1,y1,zFrontInset],[x1,y1,z0]
+      ] as const; for (const p of pts) v.push(p[0],p[1],p[2], ...colWhite) })()
+      // -X
+      ;(function(){ const pts = [
+        [x0,y0,z0],[x0,y1,zFrontInset],[x0,y0,zFrontInset], [x0,y0,z0],[x0,y1,z0],[x0,y1,zFrontInset]
+      ] as const; for (const p of pts) v.push(p[0],p[1],p[2], ...colWhite) })()
+      // +Y
+      ;(function(){ const pts = [
+        [x0,y1,z0],[x1,y1,zFrontInset],[x1,y1,z0], [x0,y1,z0],[x0,y1,zFrontInset],[x1,y1,zFrontInset]
+      ] as const; for (const p of pts) v.push(p[0],p[1],p[2], ...colWhite) })()
+      // -Y
+      ;(function(){ const pts = [
+        [x0,y0,z0],[x1,y0,z0],[x1,y0,zFrontInset], [x0,y0,z0],[x1,y0,zFrontInset],[x0,y0,zFrontInset]
+      ] as const; for (const p of pts) v.push(p[0],p[1],p[2], ...colWhite) })()
+      // -Z (back face)
+      ;(function(){ const pts = [
+        [x0,y0,z0],[x1,y1,z0],[x0,y1,z0], [x0,y0,z0],[x1,y0,z0],[x1,y1,z0]
+      ] as const; for (const p of pts) v.push(p[0],p[1],p[2], ...colWhite) })()
+      // (+Z face intentionally omitted)
+    }
+
+    // Mounting beams: two horizontal beams from pole to board, plus two short vertical struts near board
+    const beamW = 0.10
+    const beamH = 0.08
+    const poleFrontZ = poleZ + poleD/2
+    const boardBackZ = backZ - boardT/2
+    // Upper horizontal beam
+    pushBox(
+      [cx - beamW/2, rimY + 0.20 - beamH/2, poleFrontZ],
+      [cx + beamW/2, rimY + 0.20 + beamH/2, boardBackZ],
+      colGray,
+    )
+    // Lower horizontal beam
+    pushBox(
+      [cx - beamW/2, rimY - 0.20 - beamH/2, poleFrontZ],
+      [cx + beamW/2, rimY - 0.20 + beamH/2, boardBackZ],
+      colGray,
+    )
+    // Vertical struts near board
+    const strutXOffset = 0.35
+    const strutT = 0.08
+    pushBox(
+      [cx - strutXOffset - strutT/2, rimY - 0.20, boardBackZ - 0.10],
+      [cx - strutXOffset + strutT/2, rimY + 0.20, boardBackZ + 0.02],
+      colGray,
+    )
+    pushBox(
+      [cx + strutXOffset - strutT/2, rimY - 0.20, boardBackZ - 0.10],
+      [cx + strutXOffset + strutT/2, rimY + 0.20, boardBackZ + 0.02],
+      colGray,
+    )
+
+    // Rim ring centered at hoop
+    const rOut = 0.235
+    const rIn = 0.19
+    pushRing([cx, rimY, rimZ], rIn, rOut, rimY)
+
+    return new Float32Array(v)
   }
 
   // Build a minimal capsule-like mesh (cylinder with flat caps) for shadow casting

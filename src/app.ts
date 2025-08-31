@@ -4,6 +4,7 @@ import { Camera } from './game/camera'
 import { Renderer } from './core/renderer/renderer'
 import { Player } from './game/player'
 import { WORLD_BOXES } from './game/world/world'
+import { Net } from './game/world/net'
 
 export class App {
   private gl: WebGL2RenderingContext | WebGLRenderingContext
@@ -14,6 +15,7 @@ export class App {
   private camera: Camera
   private renderer: Renderer
   private player: Player
+  private net: Net
 
   constructor(private canvas: HTMLCanvasElement) {
     const gl2 = canvas.getContext('webgl2', { antialias: true })
@@ -30,6 +32,7 @@ export class App {
     this.camera = new Camera(this.width / this.height)
     this.renderer = new Renderer(this.gl)
     this.player = new Player()
+    this.net = new Net()
     window.addEventListener('resize', () => this.handleResize())
     canvas.addEventListener('click', () => {
       if (document.pointerLockElement !== canvas) {
@@ -80,6 +83,8 @@ export class App {
     this.camera.position[2] = this.player.pos[2]
     // refresh view after moving
     this.camera.sync()
+    // Update net (no ball yet)
+    this.net.update(dt)
   }
 
   private render(_alpha: number) {
@@ -87,6 +92,8 @@ export class App {
     gl.enable(gl.DEPTH_TEST)
     gl.clearColor(0.05, 0.07, 0.1, 1.0)
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
+    // Sync net geometry to GPU (thick lines face camera)
+    this.renderer.syncNet(this.net, this.camera.position)
     this.renderer.render(
       this.camera.getView(),
       this.camera.getProj(),
