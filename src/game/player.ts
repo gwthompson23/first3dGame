@@ -1,5 +1,6 @@
 import { Vec3 } from '@/core/math/math'
 import { resolveCapsuleVsAABB, AABB } from './world/collision'
+import { heightAt } from './world/terrain'
 import { Inputs } from '@/core/input/inputs'
 
 export class Player {
@@ -80,13 +81,22 @@ export class Player {
     this.pos[1] += this.vel[1] * dt
     this.pos[2] += this.vel[2] * dt
 
-    // collide with ground plane at y=0 (feet)
-    if (this.pos[1] < 0) {
-      this.pos[1] = 0
+    // collide with procedural terrain height (feet)
+    const terrainY = heightAt(this.pos[0], this.pos[2])
+    if (this.pos[1] < terrainY) {
+      this.pos[1] = terrainY
       if (this.vel[1] < 0) this.vel[1] = 0
       this.grounded = true
     } else {
-      this.grounded = false
+      const gap = this.pos[1] - terrainY
+      if (gap <= 0.05 && this.vel[1] <= 0) {
+        this.pos[1] = terrainY
+        this.vel[1] = 0
+        this.grounded = true
+      } else {
+        // will be set true later if we hit a box with upward normal
+        this.grounded = false
+      }
     }
 
     // collide with world boxes using capsule vs AABB

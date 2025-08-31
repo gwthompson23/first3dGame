@@ -12,6 +12,7 @@ import skyFrag100 from './shaders/skybox.frag.glsl?raw'
 import skyVert300 from './shaders/skybox.vert-300es.glsl?raw'
 import skyFrag300 from './shaders/skybox.frag-300es.glsl?raw'
 import { mat4Multiply } from '@/core/math/math'
+import { heightAt, TERRAIN_SIZE } from '@/game/world/terrain'
 import { loadImageTexture } from '@/core/renderer/texture'
 import { loadHDRToLDRTexture } from '@/core/renderer/hdr'
 
@@ -27,6 +28,7 @@ export class Renderer {
   private uGroundTile: WebGLUniformLocation | null
   private uGroundSampler: WebGLUniformLocation | null
   private groundBuffer: WebGLBuffer
+  private groundVertexCount = 0
   private groundTex: WebGLTexture | null = null
 
   // Sky program (equirectangular 2D texture)
@@ -118,16 +120,37 @@ export class Renderer {
     gl.bufferData(gl.ARRAY_BUFFER, Renderer.cube(), gl.STATIC_DRAW)
 
     // Ground vertex data: position (x,y,z) + uv (u,v)
-    const size = 50
-    const tiling = 20 // UV tiling across the quad; shader can scale further
-    const groundVerts = new Float32Array([
-      -size, 0, -size,   0,      0,
-       size, 0, -size,   tiling, 0,
-       size, 0,  size,   tiling, tiling,
-      -size, 0, -size,   0,      0,
-       size, 0,  size,   tiling, tiling,
-      -size, 0,  size,   0,      tiling,
-    ])
+    const size = TERRAIN_SIZE
+    const tiling = 20
+    const res = 128 // number of quads per side
+    const verts: number[] = []
+    const sampleHeight = (x: number, z: number) => heightAt(x, z)
+    for (let iz = 0; iz < res; iz++) {
+      for (let ix = 0; ix < res; ix++) {
+        const x0 = -size + (ix / res) * (2 * size)
+        const x1 = -size + ((ix + 1) / res) * (2 * size)
+        const z0 = -size + (iz / res) * (2 * size)
+        const z1 = -size + ((iz + 1) / res) * (2 * size)
+        const u0 = (ix / res) * tiling
+        const u1 = ((ix + 1) / res) * tiling
+        const v0 = (iz / res) * tiling
+        const v1 = ((iz + 1) / res) * tiling
+        const y00 = sampleHeight(x0, z0)
+        const y10 = sampleHeight(x1, z0)
+        const y11 = sampleHeight(x1, z1)
+        const y01 = sampleHeight(x0, z1)
+        // tri 1
+        verts.push(x0, y00, z0,  u0, v0)
+        verts.push(x1, y10, z0,  u1, v0)
+        verts.push(x1, y11, z1,  u1, v1)
+        // tri 2
+        verts.push(x0, y00, z0,  u0, v0)
+        verts.push(x1, y11, z1,  u1, v1)
+        verts.push(x0, y01, z1,  u0, v1)
+      }
+    }
+    const groundVerts = new Float32Array(verts)
+    this.groundVertexCount = groundVerts.length / 5
     const gbuf = gl.createBuffer()
     if (!gbuf) throw new Error('Failed to create ground buffer')
     this.groundBuffer = gbuf
@@ -217,7 +240,7 @@ export class Renderer {
       gl.bindTexture(gl.TEXTURE_2D, this.groundTex)
       gl.uniform1i(this.uGroundSampler, 0)
     }
-    gl.drawArrays(gl.TRIANGLES, 0, 6)
+    gl.drawArrays(gl.TRIANGLES, 0, this.groundVertexCount)
 
     // 3) Debug cube (colored)
     gl.useProgram(this.program)

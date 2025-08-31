@@ -1,14 +1,14 @@
 # Repository Guidelines
 
-## Project Structure & Module Organization
-- `src/`: TypeScript source.
-  - `main.ts` (entry), `app.ts` (GL init, loop, pointer lock).
-  - `core/`: Engine utilities (`gl.ts`, `input/`, `math/`, `renderer/`).
-  - `game/`: Game logic (`camera.ts`, `player.ts`, `world/`).
-  - `types/`: Type decls for raw/GLSL imports.
-- `index.html`: App shell with `<canvas id="scene">`.
-- `src/styles.css`: Global styles.
-- `vite.config.ts`: `@` alias to `src/`.
+## Project Structure
+- `src/`: TypeScript source
+  - `main.ts` (entry), `app.ts` (GL init, loop, pointer lock)
+  - `core/`: engine utilities (`gl.ts`, `input/`, `math/`, `renderer/`)
+  - `game/`: gameplay (`camera.ts`, `player.ts`, `world/` with `collision.ts`, `terrain.ts`)
+  - `types/`: type decls for raw/GLSL imports
+- `public/`: static assets (`textures/ground/diffuse.jpg`, `textures/sky/sky.hdr`)
+- `index.html`: app shell with `<canvas id="scene">`
+- `vite.config.ts`: `@` alias to `src/`
 
 Prefer small, focused modules. Use `@/path/to/module` for imports inside `src`.
 
@@ -20,30 +20,28 @@ Prefer small, focused modules. Use `@/path/to/module` for imports inside `src`.
 
 Example: `npm run dev` then click the canvas to lock the pointer.
 
-## Coding Style & Naming Conventions
-- Language: TypeScript (strict). Modules: ESNext.
-- Indentation: 2 spaces; Unix newlines; UTF‑8.
-- Filenames: lowercase with dashes for multiword (`basic.vert-300es.glsl`).
-- Naming: PascalCase for classes (`Camera`, `Renderer`), camelCase for vars/functions.
-- Imports: prefer path alias `@/...` over relative `../../`.
-- Formatting/Linting: Not configured. Keep diffs small and consistent; run `npm run typecheck` before pushing.
+## Coding Style
+- TypeScript (strict), ES modules; 2‑space indent; UTF‑8
+- Filenames lowercase with dashes; classes PascalCase; vars/functions camelCase
+- Prefer `@/...` imports over deep relatives
+- No formatter configured — keep diffs small; run `npm run typecheck`
 
-## Testing Guidelines
-- No test framework is configured yet.
-- If adding tests, use Vitest and colocate as `*.spec.ts` next to modules or under `src/__tests__/`.
-- Keep tests deterministic (fixed timestep where applicable). Mock WebGL where needed.
+## Testing
+- None configured. If needed, use Vitest and colocate `*.spec.ts`.
 
-## Commit & Pull Request Guidelines
-- Commits: Imperative mood, concise scope, e.g., `feat(player): add capsule collisions`.
-- PRs should include:
-  - Summary of changes and rationale.
-  - Screenshots/GIFs for visual changes (camera, rendering, input).
-  - Linked issues and clear testing steps (`npm run dev`, reproduce, verify).
-- Keep PRs focused; avoid unrelated refactors.
+## Commits & PRs
+- Commits: imperative and scoped (e.g., `feat(player): add capsule collisions`)
+- PRs: summarize changes, include visuals for rendering/input, provide steps to verify
 
-## Architecture Overview
-- Loop: `src/loop.ts` runs fixed updates and renders each frame.
-- Input/Camera: Mouse look via pointer lock; keyboard drives `Player`.
-- Physics: Simple capsule vs AABB + ground plane.
-- Render: `Renderer` draws ground and debug cube; shaders live under `core/renderer/shaders/` and are imported with `?raw`.
+## Architecture
+- Loop: `src/loop.ts` runs fixed updates + per‑frame render
+- Input/Camera: pointer‑lock mouse look; keyboard drives `Player`
+- Physics: capsule vs AABB; ground via `heightAt(x,z)` (procedural terrain)
+- Render order: sky (fullscreen, equirect HDR decoded in `hdr.ts`), ground (heightfield + tiling diffuse), debug cube; shaders in `core/renderer/shaders/`
 
+## Assets
+- Ground: `public/textures/ground/diffuse.jpg`
+- Sky: `public/textures/sky/sky.hdr`
+
+## Next Steps
+- Optional: surface‑normal grounding/slope limits; basic lighting; world bounds
